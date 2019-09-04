@@ -1,11 +1,11 @@
 #!/usr/bin/env python
-"""Implementation of Microchip's AN1388 on Linux using UART"""
+"""Implementation of Microchip's AN1388 on Linux using UDP"""
 
 from __future__ import print_function
 
 import sys
 
-import serial
+import socket
 from argparse import ArgumentParser, RawTextHelpFormatter
 from binascii import hexlify, unhexlify
 
@@ -23,9 +23,10 @@ __status__ = "Development"
 
 CRC_TABLE = [
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
-    0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1c1, 0xf1ef]
+    0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef]
 
 DEBUG_LEVEL = 0
+server_address = ('192.168.1.61', 6234) # default address and port
 
 def crc16(data):
     """Calculate the CRC-16 for a string"""
@@ -69,13 +70,13 @@ def parse_args():
         action='store_true')
 
     pars.add_argument(
-        '-p', '--port',
-        help='Serial port to use',
+        '-a', '--addr',
+        help='Address IP to use',
         required=True)
     pars.add_argument(
-        '-b', '--baud',
-        help='Baudrate to the bootloader',
-        type=int, default=115200)
+        '-p', '--port',
+        help='UDP port ',
+        type=int, default=6234)
     pars.add_argument(
         '-t', '--timeout',
         help='Timeout in seconds',
@@ -114,27 +115,34 @@ def unescape(data):
             record += byte
     return record
 
-def send_request(port, command):
-    """Send a command over a serial port"""
+def send_request(soc, command):
+    """Send a command over a UDP S"""
+    global server_address
+
     command = escape(command)
 
     # Build and send request
     request = '\x01' + command + escape(crc16(command)) + '\x04'
-    port.write(request)
+    sent = soc.sendto(request, server_address)
+
     if DEBUG_LEVEL >= 2:
         print('>', hexlify(request))
     return len(request)
 
-def read_response(port, command):
-    """Read the response from the serial port"""
+def read_response(soc, command):
+    """Read the response from the UDP socket"""
     response = ''
     while len(response) < 4 \
           or response[-1] != '\x04' or response[-2] == '\x10':
-        byte = port.read(1)
-        if len(byte) == 0:
+
+        try:
+            response, server = soc.recvfrom(1024)
+        except Exception as e:
+            print("Read Timed Out, Check IP addr, or port num")
+            quit()
+
+        if len(response) == 0:
             raise IOError('Bootloader response timed out')
-        if byte == '\x01' or len(response) > 0:
-            response += byte
 
     if DEBUG_LEVEL >= 2:
         print('<', hexlify(response))
@@ -152,7 +160,7 @@ def read_response(port, command):
 
     return response[1:-2]
 
-def upload(port, filename):
+def upload(soc, filename):
     """Upload a hexfile"""
     txcount, rxcount, txsize, rxsize = 0, 0, 0, 0
     with open(filename) as hexfile:
@@ -167,8 +175,8 @@ def upload(port, filename):
                 sys.stdout.flush()
             # Convert from ASCII to hexdec
             data = unhexlify(line[1:-1])
-            txsize += send_request(port, '\x03' + data)
-            response = read_response(port, '\x03')
+            txsize += send_request(soc, '\x03' + data)
+            response = read_response(soc, '\x03')
             rxsize += len(response) + 4
             txcount += 1
             rxcount += 1
@@ -177,26 +185,58 @@ def upload(port, filename):
 
 def main():
     """Main programmer function"""
+    
     global DEBUG_LEVEL # pylint: disable=global-statement
+    global server_address
 
     args = parse_args()
+
     DEBUG_LEVEL = args.debug
-    ser = serial.Serial(args.port, args.baud, timeout=args.timeout)
+
+    addr_ip = str(args.addr)
+
+    # Check valid Ip Address
+    try:
+        socket.inet_aton(addr_ip)
+    except Exception as e:
+        print("Err.Not a valid IP address")
+        quit()
+
+    udp_port = args.port
+
+    # check if port is int
+    try:
+        udp_port = int(udp_port)
+    except Exception as e:
+        print("Err. UDP Port must be an integer")
+        quit()
+
+    read_timeout = args.timeout
+
+    server_address = (addr_ip , udp_port)
+
+    # Create a UDP socket
+    soc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    #Set socket Read timeout 
+    soc.settimeout(read_timeout)
+
+    print("Connecting to " + addr_ip + " : " + str(udp_port))
 
     if args.version:
         print('Querying..')
-        send_request(ser, '\x01')
-        version = read_response(ser, '\x01')
+        send_request(soc, '\x01')
+        version = read_response(soc, '\x01')
         print('Bootloader version: ' + hexlify(version))
 
     if args.erase:
         print('Erasing..')
-        send_request(ser, '\x02')
-        read_response(ser, '\x02')
+        send_request(soc, '\x02')
+        read_response(soc, '\x02')
 
     if args.upload != None:
         print('Uploading..')
-        upstats = upload(ser, args.upload)
+        upstats = upload(soc, args.upload)
         print(
             'Transmitted: %d packets (%d bytes), '\
             'Received: %d packets (%d bytes)' % upstats)
@@ -206,13 +246,13 @@ def main():
         addr, size = args.check.split(':')
         addr, size = addr.zfill(8), size.zfill(8)
         send_request(
-            ser, '\x04' + unhexlify(addr)[::-1] + unhexlify(size)[::-1])
-        checksum = read_response(ser, '\04')
+            soc, '\x04' + unhexlify(addr)[::-1] + unhexlify(size)[::-1])
+        checksum = read_response(soc, '\04')
         print('CRC @%s[%s]: %s' % (addr, size, hexlify(checksum)))
 
     if args.run:
         print('Running application..')
-        send_request(ser, '\x05')
+        send_request(soc, '\x05')
 
     print('Done.')
 
