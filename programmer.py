@@ -1,6 +1,17 @@
 #!/usr/bin/env python
 """Implementation of Microchip's AN1388 on Linux using UART"""
 
+# TODO :
+# - Create an Abstract class to be used an interface to communication protocols
+# - Create 2 classes for each to Use UART and UDP and maybe later other protocols
+# - adapt read and send request to use these abstract methods of communication
+# - take care of the CRC table, for both versions, it is different
+# - now it will have more arguments, put into groups if possible
+# - acctually not the whole read and write request are to be changed
+#   only parts of the functions
+# - debugging is so dependant to function, think of a way to make less dependant.
+
+
 from __future__ import print_function
 
 import sys
@@ -120,7 +131,9 @@ def send_request(port, command):
 
     # Build and send request
     request = '\x01' + command + escape(crc16(command)) + '\x04'
+
     port.write(request)
+
     if DEBUG_LEVEL >= 2:
         print('>', hexlify(request))
     return len(request)
