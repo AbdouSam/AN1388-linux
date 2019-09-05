@@ -22,7 +22,7 @@ import serial
 from argparse import ArgumentParser, RawTextHelpFormatter
 from binascii import hexlify, unhexlify
 import abc
-from abc import abstractmethod 
+from abc import ABCMeta, abstractmethod 
 
 __author__ = "Camil Staps, V Govorovski"
 __copyright__ = "Copyright 2015, Camil Staps"
@@ -50,6 +50,8 @@ CRC_TABLE_1 = [
 DEBUG_LEVEL = 0
 
 class DataStream:
+    __metaclass__ = ABCMeta
+
     global DEBUG_LEVEL
 
     def process_read_response(self,response, command):
@@ -78,11 +80,7 @@ class DataStream:
         return len(request)
 
     @abstractmethod
-    def open(self, stream):
-        pass
-
-    @abstractmethod
-    def read_request(self, stream, command):
+    def read_response(self, stream, command):
         pass
 
     @abstractmethod
@@ -99,7 +97,7 @@ class UDPStream(DataStream):
         self.soc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.soc.settimeout(self.timeout)
 
-    def read_request(self, command):
+    def read_response(self, command):
         """Read the response from the UDP socket"""
         response = ''
 
@@ -112,7 +110,7 @@ class UDPStream(DataStream):
                 print("Read Timed Out, Check IP addr, or port num")
                 quit()
 
-        return super().process_read_response(response, command)
+        return super(UDPStream, self).process_read_response(response, command)
 
     def send_request(self, command):
 
@@ -125,7 +123,7 @@ class UDPStream(DataStream):
         
         self.soc.sendto(request, server_address)
 
-        return super().process_send_request(request, command)
+        return super(UDPStream, self).process_send_request(request, command)
 
 class UARTStream(DataStream):
 
@@ -137,7 +135,7 @@ class UARTStream(DataStream):
                                 self.uart_baud,
                                 timeout=self.timeout)
 
-    def read_request(self, command):
+    def read_response(self, command):
         response = ''
         
         while len(response) < 4 \
@@ -149,7 +147,7 @@ class UARTStream(DataStream):
             if byte == '\x01' or len(response) > 0:
                 response += byte
         
-        return super().process_read_response(response, command)
+        return super(UARTStream, self).process_read_response(response, command)
 
     def send_request(self, command):
         command = escape(command)
@@ -159,7 +157,7 @@ class UARTStream(DataStream):
 
         self.ser.write(request)
 
-        return super().process_send_request(request, command)
+        return super(UARTStream, self).process_send_request(request, command)
 
 
 def crc16(data):
