@@ -16,7 +16,9 @@ from __future__ import print_function
 
 import sys
 
+import socket
 import serial
+
 from argparse import ArgumentParser, RawTextHelpFormatter
 from binascii import hexlify, unhexlify
 
@@ -32,32 +34,58 @@ __maintainer__ = "Camil Staps"
 __email__ = "info@camilstaps.nl"
 __status__ = "Development"
 
-CRC_TABLE = [
+CRC_TABLE_UART = [
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
     0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1c1, 0xf1ef]
 
 DEBUG_LEVEL = 0
+server_address = ('0.0.0.0', 0) # For UDP use
 
-def crc16(data):
+def crc16_uart(data):
     """Calculate the CRC-16 for a string"""
     i = 0
     crc = 0
     for byte in data:
         i = (crc >> 12) ^ (ord(byte) >> 4)
-        crc = CRC_TABLE[i & 0x0f] ^ (crc << 4)
+        crc = CRC_TABLE_UART[i & 0x0f] ^ (crc << 4)
         i = (crc >> 12) ^ (ord(byte) >> 0)
-        crc = CRC_TABLE[i & 0x0f] ^ (crc << 4)
+        crc = CRC_TABLE_UART[i & 0x0f] ^ (crc << 4)
 
     return chr(crc & 0xff) + chr((crc >> 8) & 0xff)
+
 
 def parse_args():
     """Parse command line arguments"""
     pars = ArgumentParser(formatter_class=RawTextHelpFormatter)
+    
+    pars.add_argument(
+        '-m', '--mode',
+        choices=['uart','udp'],
+        required=True)
+
+    pars.add_argument(
+        '-a','--udp-addr',
+        help='IP Address for UDP')
+
+    pars.add_argument(
+        '-n','--udp-port',
+        help='UDP port number',
+        type=int, default=6234)
+    
+    pars.add_argument(
+        '-p', '--port',
+        help='Serial port to use')
+
+    pars.add_argument(
+        '-b', '--baud',
+        help='Baudrate to the bootloader',
+        type=int, default=115200)
 
     pars.add_argument(
         '-u', '--upload',
         help='Upload file to chip',
         metavar='firmware.hex')
+
     pars.add_argument(
         '-c', '--check',
         help='Check CRC of a memory block ADDR:SIZE\n'\
@@ -65,10 +93,12 @@ def parse_args():
              '  SIZE - 32 bit block length in bytes',
         type=str, default='9d000000:000000ff',
         nargs='?')
+
     pars.add_argument(
         '-e', '--erase',
         help='Erase before upload',
         action='store_true')
+
     pars.add_argument(
         '-r', '--run',
         help='Run after upload',
@@ -79,14 +109,6 @@ def parse_args():
         help='Read bootloader version',
         action='store_true')
 
-    pars.add_argument(
-        '-p', '--port',
-        help='Serial port to use',
-        required=True)
-    pars.add_argument(
-        '-b', '--baud',
-        help='Baudrate to the bootloader',
-        type=int, default=115200)
     pars.add_argument(
         '-t', '--timeout',
         help='Timeout in seconds',
@@ -130,7 +152,7 @@ def send_request(port, command):
     command = escape(command)
 
     # Build and send request
-    request = '\x01' + command + escape(crc16(command)) + '\x04'
+    request = '\x01' + command + escape(crc16_uart(command)) + '\x04'
 
     port.write(request)
 
@@ -160,7 +182,7 @@ def read_response(port, command):
     # Verify SOH, EOT and command fields
     if response[0] != command:
         raise IOError('Unexpected response type from bootloader')
-    if crc16(response[:-2]) != response[-2:]:
+    if crc16_uart(response[:-2]) != response[-2:]:
         raise IOError('Invalid CRC from bootloader')
 
     return response[1:-2]
@@ -191,9 +213,13 @@ def upload(port, filename):
 def main():
     """Main programmer function"""
     global DEBUG_LEVEL # pylint: disable=global-statement
+    global server_address
 
     args = parse_args()
     DEBUG_LEVEL = args.debug
+    
+    # Check Parameters
+    
     ser = serial.Serial(args.port, args.baud, timeout=args.timeout)
 
     if args.version:
