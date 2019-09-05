@@ -21,7 +21,8 @@ import serial
 
 from argparse import ArgumentParser, RawTextHelpFormatter
 from binascii import hexlify, unhexlify
-from abc import ABC, abstractmethod 
+import abc
+from abc import abstractmethod 
 
 __author__ = "Camil Staps, V Govorovski"
 __copyright__ = "Copyright 2015, Camil Staps"
@@ -35,20 +36,26 @@ __maintainer__ = "Camil Staps"
 __email__ = "info@camilstaps.nl"
 __status__ = "Development"
 
-CRC_TABLE_UART = [
+# Tables are excatly the same, except the [-2] element, it depend on 
+# the version of bootloader Library you are using on your PIC MCU
+
+CRC_TABLE_0 = [
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
     0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1c1, 0xf1ef]
 
-DEBUG_LEVEL = 0
-server_address = ('0.0.0.0', 0) # For UDP use
+CRC_TABLE_1 = [
+    0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
+    0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef]
 
-class DataStream(ABC):
+DEBUG_LEVEL = 0
+
+class DataStream:
     global DEBUG_LEVEL
 
     def process_read_response(self,response, command):
         
         if DEBUG_LEVEL >= 2:
-        print('<', hexlify(response))
+            print('<', hexlify(response))
 
         if response[0] != '\x01' or response[-1] != '\x04':
             raise IOError('Invalid response from bootloader')
@@ -60,12 +67,14 @@ class DataStream(ABC):
             raise IOError('Unexpected response type from bootloader')
         if crc16(response[:-2]) != response[-2:]:
             raise IOError('Invalid CRC from bootloader')
-            pass
+
+        return response[1:-2]
 
     def process_send_request(self, request, command):
         
         if DEBUG_LEVEL >= 2:
             print('>', hexlify(request))
+
         return len(request)
 
     @abstractmethod
@@ -91,8 +100,9 @@ class UDPStream(DataStream):
         self.soc.settimeout(self.timeout)
 
     def read_request(self, command):
-            """Read the response from the UDP socket"""
+        """Read the response from the UDP socket"""
         response = ''
+
         while len(response) < 4 \
               or response[-1] != '\x04' or response[-2] == '\x10':
 
@@ -102,7 +112,7 @@ class UDPStream(DataStream):
                 print("Read Timed Out, Check IP addr, or port num")
                 quit()
 
-        super().process_read_response(response, command)
+        return super().process_read_response(response, command)
 
     def send_request(self, command):
 
@@ -115,7 +125,7 @@ class UDPStream(DataStream):
         
         self.soc.sendto(request, server_address)
 
-        super().process_send_request(request, command)
+        return super().process_send_request(request, command)
 
 class UARTStream(DataStream):
 
@@ -129,6 +139,7 @@ class UARTStream(DataStream):
 
     def read_request(self, command):
         response = ''
+        
         while len(response) < 4 \
               or response[-1] != '\x04' or response[-2] == '\x10':
 
@@ -138,7 +149,7 @@ class UARTStream(DataStream):
             if byte == '\x01' or len(response) > 0:
                 response += byte
         
-        super().process_read_response(response, command)
+        return super().process_read_response(response, command)
 
     def send_request(self, command):
         command = escape(command)
@@ -148,18 +159,21 @@ class UARTStream(DataStream):
 
         self.ser.write(request)
 
-        super().process_send_request(request, command)
+        return super().process_send_request(request, command)
 
 
 def crc16(data):
     """Calculate the CRC-16 for a string"""
+
+    CRC_TABLE = CRC_TABLE_0
+
     i = 0
     crc = 0
     for byte in data:
         i = (crc >> 12) ^ (ord(byte) >> 4)
-        crc = CRC_TABLE_UART[i & 0x0f] ^ (crc << 4)
+        crc = CRC_TABLE[i & 0x0f] ^ (crc << 4)
         i = (crc >> 12) ^ (ord(byte) >> 0)
-        crc = CRC_TABLE_UART[i & 0x0f] ^ (crc << 4)
+        crc = CRC_TABLE[i & 0x0f] ^ (crc << 4)
 
     return chr(crc & 0xff) + chr((crc >> 8) & 0xff)
 
@@ -168,7 +182,8 @@ def parse_args():
     pars = ArgumentParser(formatter_class=RawTextHelpFormatter)
     
     pars.add_argument(
-        '-m', '--mode',
+        '-i', '--interface',
+        help='Choose bootloader communication interface',
         choices=['uart','udp'],
         required=True)
 
@@ -256,48 +271,7 @@ def unescape(data):
             record += byte
     return record
 
-def send_request(port, command):
-    """Send a command over a serial port"""
-    command = escape(command)
-
-    # Build and send request
-    request = '\x01' + command + escape(crc16(command)) + '\x04'
-
-    port.write(request)
-
-    if DEBUG_LEVEL >= 2:
-        print('>', hexlify(request))
-    return len(request)
-
-def read_response(port, command):
-    """Read the response from the serial port"""
-    response = ''
-    while len(response) < 4 \
-          or response[-1] != '\x04' or response[-2] == '\x10':
-
-        byte = port.read(1)
-        if len(byte) == 0:
-            raise IOError('Bootloader response timed out')
-        if byte == '\x01' or len(response) > 0:
-            response += byte
-
-    if DEBUG_LEVEL >= 2:
-        print('<', hexlify(response))
-
-    if response[0] != '\x01' or response[-1] != '\x04':
-        raise IOError('Invalid response from bootloader')
-
-    response = unescape(response[1:-1])
-
-    # Verify SOH, EOT and command fields
-    if response[0] != command:
-        raise IOError('Unexpected response type from bootloader')
-    if crc16(response[:-2]) != response[-2:]:
-        raise IOError('Invalid CRC from bootloader')
-
-    return response[1:-2]
-
-def upload(port, filename):
+def upload(conn_stream, filename):
     """Upload a hexfile"""
     txcount, rxcount, txsize, rxsize = 0, 0, 0, 0
     with open(filename) as hexfile:
@@ -312,8 +286,8 @@ def upload(port, filename):
                 sys.stdout.flush()
             # Convert from ASCII to hexdec
             data = unhexlify(line[1:-1])
-            txsize += send_request(port, '\x03' + data)
-            response = read_response(port, '\x03')
+            txsize += conn_stream.send_request('\x03' + data)
+            response = conn_stream.read_response('\x03')
             rxsize += len(response) + 4
             txcount += 1
             rxcount += 1
@@ -323,25 +297,27 @@ def upload(port, filename):
 def main():
     """Main programmer function"""
     global DEBUG_LEVEL # pylint: disable=global-statement
-    global server_address
 
     args = parse_args()
+
     DEBUG_LEVEL = args.debug
     
-    if (args.mode == 'uart'):
-        #check for parameters and open serial
+    if (args.interface == 'uart'):
+
+        #Check required field
         if (args.port is None):
-            raise IOError("-p or --port is required in UART mode")
+            raise IOError("-p or --port is required in UART interface")
 
         print("Connecting to port: " + str(args.port) + " at baude: " \
                                                       + str(args.baud))
 
         conn_stream = UARTStream(args.port, args.baud, args.timeout)
 
-    elif (args.mode == 'udp'):
-        # Check IP and port validity
+    elif (args.interface == 'udp'):
+
+        #Check required field
         if (args.udp_addr is None):
-            raise IOError("-a or --udp-addr is required in UDP mode")
+            raise IOError("-a or --udp-addr is required in UDP interface")
 
         print("Connecting to address: " + str(args.udp_addr) \
                        + " at port: "  + str(args.udp_port))
@@ -350,18 +326,18 @@ def main():
 
     if args.version:
         print('Querying..')
-        send_request(ser, '\x01')
-        version = read_response(ser, '\x01')
+        conn_stream.send_request('\x01')
+        version = conn_stream.read_response('\x01')
         print('Bootloader version: ' + hexlify(version))
 
     if args.erase:
         print('Erasing..')
-        send_request(ser, '\x02')
-        read_response(ser, '\x02')
+        conn_stream.send_request('\x02')
+        conn_stream.read_response('\x02')
 
     if args.upload != None:
         print('Uploading..')
-        upstats = upload(ser, args.upload)
+        upstats = upload(conn_stream, args.upload)
         print(
             'Transmitted: %d packets (%d bytes), '\
             'Received: %d packets (%d bytes)' % upstats)
@@ -370,14 +346,14 @@ def main():
         print('Verifying..')
         addr, size = args.check.split(':')
         addr, size = addr.zfill(8), size.zfill(8)
-        send_request(
-            ser, '\x04' + unhexlify(addr)[::-1] + unhexlify(size)[::-1])
-        checksum = read_response(ser, '\04')
+        conn_stream.send_request(
+            '\x04' + unhexlify(addr)[::-1] + unhexlify(size)[::-1])
+        checksum = conn_stream.read_response('\04')
         print('CRC @%s[%s]: %s' % (addr, size, hexlify(checksum)))
 
     if args.run:
         print('Running application..')
-        send_request(ser, '\x05')
+        conn_stream.send_request('\x05')
 
     print('Done.')
 
