@@ -2,14 +2,10 @@
 """Implementation of Microchip's AN1388 on Linux using UART"""
 
 # TODO :
-# - Create an Abstract class to be used an interface to communication protocols
-# - Create 2 classes for each to Use UART and UDP and maybe later other protocols
-# - adapt read and send request to use these abstract methods of communication
-# - take care of the CRC table, for both versions, it is different
-# - now it will have more arguments, put into groups if possible
-# - acctually not the whole read and write request are to be changed
-#   only parts of the functions
-# - debugging is so dependant to function, think of a way to make less dependant.
+# - send_request and read_response are almost the same in both
+#   Classes, we can optimize the code, making a common send and read
+# -
+#
 
 
 from __future__ import print_function
@@ -101,14 +97,11 @@ class UDPStream(DataStream):
         """Read the response from the UDP socket"""
         response = ''
 
-        while len(response) < 4 \
-              or response[-1] != '\x04' or response[-2] == '\x10':
-
-            try:
-                response, server = self.soc.recvfrom(1024)
-            except Exception as e:
-                print("Read Timed Out, Check IP addr, or port num")
-                quit()
+        try:
+            response, server = self.soc.recvfrom(1024)
+        except Exception as e:
+            print("Read Timed Out, Check IP addr, or port num")
+            quit()
 
         return super(UDPStream, self).process_read_response(response, command)
 
@@ -142,6 +135,7 @@ class UARTStream(DataStream):
               or response[-1] != '\x04' or response[-2] == '\x10':
 
             byte = self.ser.read(1)
+
             if len(byte) == 0:
                 raise IOError('Bootloader response timed out')
             if byte == '\x01' or len(response) > 0:
