@@ -218,9 +218,28 @@ def main():
     args = parse_args()
     DEBUG_LEVEL = args.debug
     
-    # Check Parameters
-    
-    ser = serial.Serial(args.port, args.baud, timeout=args.timeout)
+    if (args.mode == 'uart'):
+        #check for parameters and open serial
+        if (args.port is None):
+            raise IOError("-p or --port is required in UART mode")
+
+        print("Connecting to port: " + str(args.port) + " at baude: " \
+                                                      + str(args.baud))
+
+        ser = serial.Serial(args.port, args.baud, timeout=args.timeout)
+
+    elif (args.mode == 'udp'):
+        # Check IP and port validity
+        if (args.udp_addr is None):
+            raise IOError("-a or --udp-addr is required in UDP mode")
+
+        print("Connecting to address: " + str(args.udp_addr) \
+                       + " at port: "  + str(args.udp_port))
+        
+        server_address = (args.udp_addr , args.udp_port)
+        soc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        soc.settimeout(args.timeout)
+        #open
 
     if args.version:
         print('Querying..')
