@@ -21,6 +21,7 @@ import serial
 
 from argparse import ArgumentParser, RawTextHelpFormatter
 from binascii import hexlify, unhexlify
+from abc import ABC, abstractmethod 
 
 __author__ = "Camil Staps, V Govorovski"
 __copyright__ = "Copyright 2015, Camil Staps"
@@ -41,7 +42,116 @@ CRC_TABLE_UART = [
 DEBUG_LEVEL = 0
 server_address = ('0.0.0.0', 0) # For UDP use
 
-def crc16_uart(data):
+class DataStream(ABC):
+    global DEBUG_LEVEL
+
+    def process_read_response(self,response, command):
+        
+        if DEBUG_LEVEL >= 2:
+        print('<', hexlify(response))
+
+        if response[0] != '\x01' or response[-1] != '\x04':
+            raise IOError('Invalid response from bootloader')
+
+        response = unescape(response[1:-1])
+
+        # Verify SOH, EOT and command fields
+        if response[0] != command:
+            raise IOError('Unexpected response type from bootloader')
+        if crc16(response[:-2]) != response[-2:]:
+            raise IOError('Invalid CRC from bootloader')
+            pass
+
+    def process_send_request(self, request, command):
+        
+        if DEBUG_LEVEL >= 2:
+            print('>', hexlify(request))
+        return len(request)
+
+    @abstractmethod
+    def open(self, stream):
+        pass
+
+    @abstractmethod
+    def read_request(self, stream, command):
+        pass
+
+    @abstractmethod
+    def send_request(self, stream, command):
+        pass
+
+class UDPStream(DataStream):
+
+ 
+    def __init__(self, udp_addr, udp_port, timeout):
+        self.udp_addr = udp_addr
+        self.udp_port = udp_port
+        self.timeout  = timeout
+        self.soc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.soc.settimeout(self.timeout)
+
+    def read_request(self, command):
+            """Read the response from the UDP socket"""
+        response = ''
+        while len(response) < 4 \
+              or response[-1] != '\x04' or response[-2] == '\x10':
+
+            try:
+                response, server = self.soc.recvfrom(1024)
+            except Exception as e:
+                print("Read Timed Out, Check IP addr, or port num")
+                quit()
+
+        super().process_read_response(response, command)
+
+    def send_request(self, command):
+
+        server_address = (self.udp_addr , self.udp_port)
+
+        command = escape(command)
+
+        # Build and send request
+        request = '\x01' + command + escape(crc16(command)) + '\x04'
+        
+        self.soc.sendto(request, server_address)
+
+        super().process_send_request(request, command)
+
+class UARTStream(DataStream):
+
+    def __init__(self, uart_port, uart_baud, timeout):
+        self.uart_port = uart_port
+        self.uart_baud = uart_baud
+        self.timeout   = timeout
+        self.ser = serial.Serial(self.uart_port,
+                                self.uart_baud,
+                                timeout=self.timeout)
+
+    def read_request(self, command):
+        response = ''
+        while len(response) < 4 \
+              or response[-1] != '\x04' or response[-2] == '\x10':
+
+            byte = self.ser.read(1)
+            if len(byte) == 0:
+                raise IOError('Bootloader response timed out')
+            if byte == '\x01' or len(response) > 0:
+                response += byte
+        
+        super().process_read_response(response, command)
+
+    def send_request(self, command):
+        command = escape(command)
+
+        # Build and send request
+        request = '\x01' + command + escape(crc16(command)) + '\x04'
+
+        self.ser.write(request)
+
+        super().process_send_request(request, command)
+
+
+def crc16(data):
     """Calculate the CRC-16 for a string"""
     i = 0
     crc = 0
@@ -52,7 +162,6 @@ def crc16_uart(data):
         crc = CRC_TABLE_UART[i & 0x0f] ^ (crc << 4)
 
     return chr(crc & 0xff) + chr((crc >> 8) & 0xff)
-
 
 def parse_args():
     """Parse command line arguments"""
@@ -152,7 +261,7 @@ def send_request(port, command):
     command = escape(command)
 
     # Build and send request
-    request = '\x01' + command + escape(crc16_uart(command)) + '\x04'
+    request = '\x01' + command + escape(crc16(command)) + '\x04'
 
     port.write(request)
 
@@ -165,6 +274,7 @@ def read_response(port, command):
     response = ''
     while len(response) < 4 \
           or response[-1] != '\x04' or response[-2] == '\x10':
+
         byte = port.read(1)
         if len(byte) == 0:
             raise IOError('Bootloader response timed out')
@@ -182,7 +292,7 @@ def read_response(port, command):
     # Verify SOH, EOT and command fields
     if response[0] != command:
         raise IOError('Unexpected response type from bootloader')
-    if crc16_uart(response[:-2]) != response[-2:]:
+    if crc16(response[:-2]) != response[-2:]:
         raise IOError('Invalid CRC from bootloader')
 
     return response[1:-2]
@@ -226,7 +336,7 @@ def main():
         print("Connecting to port: " + str(args.port) + " at baude: " \
                                                       + str(args.baud))
 
-        ser = serial.Serial(args.port, args.baud, timeout=args.timeout)
+        conn_stream = UARTStream(args.port, args.baud, args.timeout)
 
     elif (args.mode == 'udp'):
         # Check IP and port validity
@@ -235,11 +345,8 @@ def main():
 
         print("Connecting to address: " + str(args.udp_addr) \
                        + " at port: "  + str(args.udp_port))
-        
-        server_address = (args.udp_addr , args.udp_port)
-        soc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        soc.settimeout(args.timeout)
-        #open
+
+        conn_stream = UDPStream(args.udp_addr, args.udp_port, args.timeout) 
 
     if args.version:
         print('Querying..')
