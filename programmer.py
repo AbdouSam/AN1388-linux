@@ -173,7 +173,7 @@ class UARTStream(DataStream):
 def crc16(data):
     """Calculate the CRC-16 for a string"""
 
-    CRC_TABLE = CRC_TABLE_0
+    CRC_TABLE = CRC_TABLE_1
 
     i = 0
     crc = 0
