@@ -1,13 +1,6 @@
 #!/usr/bin/env python
 """Implementation of Microchip's AN1388 on Linux using UART"""
 
-# TODO :
-# - send_request and read_response are almost the same in both
-#   Classes, we can optimize the code, making a common send and read
-# -
-#
-
-
 from __future__ import print_function
 
 import sys
