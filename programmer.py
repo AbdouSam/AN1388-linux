@@ -76,11 +76,11 @@ class DataStream:
         return len(request)
 
     @abstractmethod
-    def read_response(self, stream, command):
+    def read_response(self, command):
         pass
 
     @abstractmethod
-    def send_request(self, stream, command):
+    def send_request(self, command):
         pass
 
 class UDPStream(DataStream):
@@ -93,7 +93,7 @@ class UDPStream(DataStream):
         self.soc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.soc.settimeout(self.timeout)
 
-    def udp_read(self, command):
+    def read_response(self, command):
         response = ''
 
         try:
@@ -102,17 +102,8 @@ class UDPStream(DataStream):
             print("Read Timed Out, Check IP addr, or port num")
             quit()
 
-        return response
-
-    def read_response(self, command):
-
-        response = self.udp_read(command)
-
         return super(UDPStream, self).process_read_response(response, command)
 
-    def udp_send(self, request):
-
-        self.soc.sendto(request, (self.udp_addr , self.udp_port))
 
     def send_request(self, command):
         command = escape(command)
@@ -120,7 +111,7 @@ class UDPStream(DataStream):
         # Build and send request
         request = '\x01' + command + escape(crc16(command)) + '\x04'
         
-        self.udp_send(request)
+        self.soc.sendto(request, (self.udp_addr , self.udp_port))
 
         return super(UDPStream, self).process_send_request(request, command)
 
@@ -134,7 +125,7 @@ class UARTStream(DataStream):
                                 self.uart_baud,
                                 timeout=self.timeout)
 
-    def serial_read(self, command):
+    def read_response(self, command):
         response = ''
         
         while len(response) < 4 \
@@ -147,25 +138,16 @@ class UARTStream(DataStream):
             if byte == '\x01' or len(response) > 0:
                 response += byte
 
-        return response
-
-    def read_response(self, command):
-        
-        response = self.serial_read(command)
-
         return super(UARTStream, self).process_read_response(response, command)
 
-    def serial_send(self, request):
-
-        self.ser.write(request)
-
     def send_request(self, command):
+
         command = escape(command)
 
         # Build and send request
         request = '\x01' + command + escape(crc16(command)) + '\x04'
 
-        self.serial_send(request)
+        self.ser.write(request)
 
         return super(UARTStream, self).process_send_request(request, command)
 
