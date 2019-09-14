@@ -5,13 +5,12 @@ from __future__ import print_function
 
 import sys
 
-import socket
-import serial
-
 from argparse import ArgumentParser, RawTextHelpFormatter
 from binascii import hexlify, unhexlify
-import abc
-from abc import ABCMeta, abstractmethod 
+from abc import ABCMeta, abstractmethod
+
+import socket
+import serial
 
 __author__ = "Camil Staps, V Govorovski"
 __copyright__ = "Copyright 2015, Camil Staps"
@@ -25,13 +24,11 @@ __maintainer__ = "Camil Staps"
 __email__ = "info@camilstaps.nl"
 __status__ = "Development"
 
-# Tables are excatly the same, except the [-2] element, it depend on 
-# the version of bootloader Library you are using on your PIC MCU
-
+# These tables are excatly the same, except the [-2] element. It depends on the
+# version of the bootloader library you are using on your PIC MCU.
 CRC_TABLE_0 = [
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
     0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1c1, 0xf1ef]
-
 CRC_TABLE_1 = [
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
     0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef]
@@ -43,8 +40,7 @@ class DataStream:
 
     global DEBUG_LEVEL
 
-    def process_read_response(self,response, command):
-        
+    def process_read_response(self, response, command):
         if DEBUG_LEVEL >= 2:
             print('<', hexlify(response))
 
@@ -61,8 +57,7 @@ class DataStream:
 
         return response[1:-2]
 
-    def process_send_request(self, request, command):
-        
+    def process_send_request(self, request):
         if DEBUG_LEVEL >= 2:
             print('>', hexlify(request))
 
@@ -76,13 +71,12 @@ class DataStream:
     def send_request(self, command):
         pass
 
-class UDPStream(DataStream):
 
- 
+class UDPStream(DataStream):
     def __init__(self, udp_addr, udp_port, timeout):
         self.udp_addr = udp_addr
         self.udp_port = udp_port
-        self.timeout  = timeout
+        self.timeout = timeout
         self.soc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.soc.settimeout(self.timeout)
 
@@ -90,37 +84,35 @@ class UDPStream(DataStream):
         response = ''
 
         try:
-            response, server = self.soc.recvfrom(1024)
-        except Exception as e:
+            response, _ = self.soc.recvfrom(1024)
+        except Exception:
             print("Read Timed Out, Check IP addr, or port num")
             quit()
 
         return super(UDPStream, self).process_read_response(response, command)
 
-
     def send_request(self, command):
-        command = escape(command)
-
         # Build and send request
+        command = escape(command)
         request = '\x01' + command + escape(crc16(command)) + '\x04'
-        
-        self.soc.sendto(request, (self.udp_addr , self.udp_port))
 
-        return super(UDPStream, self).process_send_request(request, command)
+        self.soc.sendto(request, (self.udp_addr, self.udp_port))
+
+        return super(UDPStream, self).process_send_request(request)
+
 
 class UARTStream(DataStream):
-
     def __init__(self, uart_port, uart_baud, timeout):
         self.uart_port = uart_port
         self.uart_baud = uart_baud
-        self.timeout   = timeout
+        self.timeout = timeout
         self.ser = serial.Serial(self.uart_port,
-                                self.uart_baud,
-                                timeout=self.timeout)
+                                 self.uart_baud,
+                                 timeout=self.timeout)
 
     def read_response(self, command):
         response = ''
-        
+
         while len(response) < 4 \
               or response[-1] != '\x04' or response[-2] == '\x10':
 
@@ -134,51 +126,48 @@ class UARTStream(DataStream):
         return super(UARTStream, self).process_read_response(response, command)
 
     def send_request(self, command):
-
-        command = escape(command)
-
         # Build and send request
+        command = escape(command)
         request = '\x01' + command + escape(crc16(command)) + '\x04'
 
         self.ser.write(request)
 
-        return super(UARTStream, self).process_send_request(request, command)
+        return super(UARTStream, self).process_send_request(request)
 
 
 def crc16(data):
     """Calculate the CRC-16 for a string"""
-
-    CRC_TABLE = CRC_TABLE_1
+    crc_table = CRC_TABLE_1
 
     i = 0
     crc = 0
     for byte in data:
         i = (crc >> 12) ^ (ord(byte) >> 4)
-        crc = CRC_TABLE[i & 0x0f] ^ (crc << 4)
+        crc = crc_table[i & 0x0f] ^ (crc << 4)
         i = (crc >> 12) ^ (ord(byte) >> 0)
-        crc = CRC_TABLE[i & 0x0f] ^ (crc << 4)
+        crc = crc_table[i & 0x0f] ^ (crc << 4)
 
     return chr(crc & 0xff) + chr((crc >> 8) & 0xff)
 
 def parse_args():
     """Parse command line arguments"""
     pars = ArgumentParser(formatter_class=RawTextHelpFormatter)
-    
+
     pars.add_argument(
         '-i', '--interface',
         help='Choose bootloader communication interface',
-        choices=['uart','udp'],
+        choices=['uart', 'udp'],
         required=True)
 
     pars.add_argument(
-        '-a','--udp-addr',
+        '-a', '--udp-addr',
         help='IP Address for UDP')
 
     pars.add_argument(
-        '-n','--udp-port',
+        '-n', '--udp-port',
         help='UDP port number',
         type=int, default=6234)
-    
+
     pars.add_argument(
         '-p', '--port',
         help='Serial port to use')
@@ -284,28 +273,21 @@ def main():
     args = parse_args()
 
     DEBUG_LEVEL = args.debug
-    
-    if (args.interface == 'uart'):
 
-        #Check required field
-        if (args.port is None):
-            raise IOError("-p or --port is required in UART interface")
+    if args.interface == 'uart':
+        if args.port is None:
+            raise IOError("--port is required with the UART interface")
 
-        print("Connecting to port: " + str(args.port) + " at baude: " \
-                                                      + str(args.baud))
+        print("Connecting to %s at baudrate %d.." % (args.port, args.baud))
 
         conn_stream = UARTStream(args.port, args.baud, args.timeout)
+    elif args.interface == 'udp':
+        if args.udp_addr is None:
+            raise IOError("--udp-addr is required with the UDP interface")
 
-    elif (args.interface == 'udp'):
+        print("Connecting to %s:%d.." % (args.udp_addr, args.udp_port))
 
-        #Check required field
-        if (args.udp_addr is None):
-            raise IOError("-a or --udp-addr is required in UDP interface")
-
-        print("Connecting to address: " + str(args.udp_addr) \
-                       + " at port: "  + str(args.udp_port))
-
-        conn_stream = UDPStream(args.udp_addr, args.udp_port, args.timeout) 
+        conn_stream = UDPStream(args.udp_addr, args.udp_port, args.timeout)
 
     if args.version:
         print('Querying..')
