@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Implementation of Microchip's AN1388 on Linux using UART"""
+"""Implementation of Microchip's AN1388 on Linux using UART/UDP"""
 
 from __future__ import print_function
 
