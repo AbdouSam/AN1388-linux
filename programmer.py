@@ -12,12 +12,13 @@ from abc import ABCMeta, abstractmethod
 import socket
 import serial
 
-__author__ = "Camil Staps, V Govorovski"
+__author__ = "Camil Staps, V Govorovski, A Abdellah"
 __copyright__ = "Copyright 2015, Camil Staps"
 __credits__ = [
     "Camil Staps",
     "Ganapathi Ramachandra (Microchip Technology Inc.)",
-    "Vadim Govorovski (Interface Devices Ltd.)"]
+    "Vadim Govorovski (Interface Devices Ltd.)",
+    "Alaouchiche Abdellah"]
 __license__ = "GPL"
 __version__ = "0.3"
 __maintainer__ = "Camil Staps"
@@ -276,7 +277,6 @@ def main():
     DEBUG_LEVEL = args.debug
     CRC_INDEX   = int(args.crc)
 
-    print(" Table indices is %d" % (CRC_TABLE[CRC_INDEX][-2]))
     if args.interface == 'uart':
         if args.port is None:
             raise IOError("--port is required with the UART interface")
