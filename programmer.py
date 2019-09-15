@@ -26,21 +26,24 @@ __status__ = "Development"
 
 # These tables are excatly the same, except the [-2] element. It depends on the
 # version of the bootloader library you are using on your PIC MCU.
-CRC_TABLE_0 = [
+CRC_TABLE = [[
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
-    0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1c1, 0xf1ef]
-CRC_TABLE_1 = [
+    0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1c1, 0xf1ef],
+    [
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
-    0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef]
+    0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef]]
 
 DEBUG_LEVEL = 0
+CRC_INDEX   = 0
 
 class DataStream:
     __metaclass__ = ABCMeta
 
     global DEBUG_LEVEL
 
-    def process_read_response(self, response, command):
+    def read_response(self, command):
+        response = self.sub_read_response()
+
         if DEBUG_LEVEL >= 2:
             print('<', hexlify(response))
 
@@ -57,18 +60,24 @@ class DataStream:
 
         return response[1:-2]
 
-    def process_send_request(self, request):
+    def send_request(self, command):
+        # Build and send request
+        command = escape(command)
+        request = '\x01' + command + escape(crc16(command)) + '\x04'
+
+        self.sub_send_request(request)
+
         if DEBUG_LEVEL >= 2:
             print('>', hexlify(request))
 
         return len(request)
 
     @abstractmethod
-    def read_response(self, command):
+    def sub_read_response(self):
         pass
 
     @abstractmethod
-    def send_request(self, command):
+    def sub_send_request(self, request):
         pass
 
 
@@ -80,25 +89,18 @@ class UDPStream(DataStream):
         self.soc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.soc.settimeout(self.timeout)
 
-    def read_response(self, command):
+    def sub_read_response(self):
         response = ''
 
         try:
             response, _ = self.soc.recvfrom(1024)
         except Exception:
-            print("Read Timed Out, Check IP addr, or port num")
-            quit()
+            raise IOError('Bootloader response timed out')
 
-        return super(UDPStream, self).process_read_response(response, command)
+        return response
 
-    def send_request(self, command):
-        # Build and send request
-        command = escape(command)
-        request = '\x01' + command + escape(crc16(command)) + '\x04'
-
+    def sub_send_request(self, request):
         self.soc.sendto(request, (self.udp_addr, self.udp_port))
-
-        return super(UDPStream, self).process_send_request(request)
 
 
 class UARTStream(DataStream):
@@ -110,7 +112,7 @@ class UARTStream(DataStream):
                                  self.uart_baud,
                                  timeout=self.timeout)
 
-    def read_response(self, command):
+    def sub_read_response(self):
         response = ''
 
         while len(response) < 4 \
@@ -123,29 +125,21 @@ class UARTStream(DataStream):
             if byte == '\x01' or len(response) > 0:
                 response += byte
 
-        return super(UARTStream, self).process_read_response(response, command)
+        return response
 
-    def send_request(self, command):
-        # Build and send request
-        command = escape(command)
-        request = '\x01' + command + escape(crc16(command)) + '\x04'
-
+    def sub_send_request(self, request):
         self.ser.write(request)
-
-        return super(UARTStream, self).process_send_request(request)
 
 
 def crc16(data):
     """Calculate the CRC-16 for a string"""
-    crc_table = CRC_TABLE_1
-
     i = 0
     crc = 0
     for byte in data:
         i = (crc >> 12) ^ (ord(byte) >> 4)
-        crc = crc_table[i & 0x0f] ^ (crc << 4)
+        crc = CRC_TABLE[CRC_INDEX][i & 0x0f] ^ (crc << 4)
         i = (crc >> 12) ^ (ord(byte) >> 0)
-        crc = crc_table[i & 0x0f] ^ (crc << 4)
+        crc = CRC_TABLE[CRC_INDEX][i & 0x0f] ^ (crc << 4)
 
     return chr(crc & 0xff) + chr((crc >> 8) & 0xff)
 
@@ -220,6 +214,12 @@ def parse_args():
         action='version',
         version='%(prog)s ' + __version__)
 
+    pars.add_argument(
+        '--crc',
+        help='CRC table',
+        choices=['0','1'],
+        default=1)
+
     return pars.parse_args()
 
 def escape(data):
@@ -269,11 +269,14 @@ def upload(conn_stream, filename):
 def main():
     """Main programmer function"""
     global DEBUG_LEVEL # pylint: disable=global-statement
+    global CRC_INDEX
 
     args = parse_args()
 
     DEBUG_LEVEL = args.debug
+    CRC_INDEX   = int(args.crc)
 
+    print(" Table indices is %d" % (CRC_TABLE[CRC_INDEX][-2]))
     if args.interface == 'uart':
         if args.port is None:
             raise IOError("--port is required with the UART interface")
