@@ -27,22 +27,26 @@ __status__ = "Development"
 
 # These tables are excatly the same, except the [-2] element. It depends on the
 # version of the bootloader library you are using on your PIC MCU.
-CRC_TABLE = [[
-    0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
-    0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1c1, 0xf1ef],
-    [
-    0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
-    0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef]]
+CRC_TABLE = [
+    [0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
+     0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1c1, 0xf1ef],
+    [0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
+     0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef]]
 
 DEBUG_LEVEL = 0
-CRC_INDEX   = 0
+CRC_INDEX = 0
 
 class DataStream:
+    """Abstract class for interfaces to the chip"""
     __metaclass__ = ABCMeta
 
-    global DEBUG_LEVEL
+    global DEBUG_LEVEL # pylint: disable=global-statement
+
+    def __init__(self):
+        pass
 
     def read_response(self, command):
+        """Retrieve response from the chip"""
         response = self.sub_read_response()
 
         if DEBUG_LEVEL >= 2:
@@ -62,7 +66,7 @@ class DataStream:
         return response[1:-2]
 
     def send_request(self, command):
-        # Build and send request
+        """Build and send request"""
         command = escape(command)
         request = '\x01' + command + escape(crc16(command)) + '\x04'
 
@@ -75,14 +79,17 @@ class DataStream:
 
     @abstractmethod
     def sub_read_response(self):
+        """Implementation-specific method to retrieve data from the chip"""
         pass
 
     @abstractmethod
     def sub_send_request(self, request):
+        """Implementation-specific method to send data to the chip"""
         pass
 
 
 class UDPStream(DataStream):
+    """UDP interface"""
     def __init__(self, udp_addr, udp_port, timeout):
         self.udp_addr = udp_addr
         self.udp_port = udp_port
@@ -90,21 +97,21 @@ class UDPStream(DataStream):
         self.soc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.soc.settimeout(self.timeout)
 
-    def sub_read_response(self):
-        response = ''
+        super(UDPStream, self).__init__()
 
+    def sub_read_response(self):
         try:
             response, _ = self.soc.recvfrom(1024)
+            return response
         except Exception:
             raise IOError('Bootloader response timed out')
-
-        return response
 
     def sub_send_request(self, request):
         self.soc.sendto(request, (self.udp_addr, self.udp_port))
 
 
 class UARTStream(DataStream):
+    """UART interface"""
     def __init__(self, uart_port, uart_baud, timeout):
         self.uart_port = uart_port
         self.uart_baud = uart_baud
@@ -112,6 +119,8 @@ class UARTStream(DataStream):
         self.ser = serial.Serial(self.uart_port,
                                  self.uart_baud,
                                  timeout=self.timeout)
+
+        super(UARTStream, self).__init__()
 
     def sub_read_response(self):
         response = ''
@@ -121,9 +130,9 @@ class UARTStream(DataStream):
 
             byte = self.ser.read(1)
 
-            if len(byte) == 0:
+            if len(byte) == 0: # pylint: disable=len-as-condition
                 raise IOError('Bootloader response timed out')
-            if byte == '\x01' or len(response) > 0:
+            if byte == '\x01' or len(response) > 0: # pylint: disable=len-as-condition
                 response += byte
 
         return response
@@ -157,7 +166,6 @@ def parse_args():
     pars.add_argument(
         '-a', '--udp-addr',
         help='IP Address for UDP')
-
     pars.add_argument(
         '-n', '--udp-port',
         help='UDP port number',
@@ -166,7 +174,6 @@ def parse_args():
     pars.add_argument(
         '-p', '--port',
         help='Serial port to use')
-
     pars.add_argument(
         '-b', '--baud',
         help='Baudrate to the bootloader',
@@ -176,7 +183,6 @@ def parse_args():
         '-u', '--upload',
         help='Upload file to chip',
         metavar='firmware.hex')
-
     pars.add_argument(
         '-c', '--check',
         help='Check CRC of a memory block ADDR:SIZE\n'\
@@ -184,17 +190,14 @@ def parse_args():
              '  SIZE - 32 bit block length in bytes',
         type=str, default='9d000000:000000ff',
         nargs='?')
-
     pars.add_argument(
         '-e', '--erase',
         help='Erase before upload',
         action='store_true')
-
     pars.add_argument(
         '-r', '--run',
         help='Run after upload',
         action='store_true')
-
     pars.add_argument(
         '-v', '--version',
         help='Read bootloader version',
@@ -204,7 +207,6 @@ def parse_args():
         '-t', '--timeout',
         help='Timeout in seconds',
         type=float, default=1.0)
-
     pars.add_argument(
         '-D', '--debug',
         help='Debug level',
@@ -218,7 +220,7 @@ def parse_args():
     pars.add_argument(
         '--crc',
         help='CRC table',
-        choices=['0','1'],
+        choices=['0', '1'],
         default=1)
 
     return pars.parse_args()
@@ -270,23 +272,23 @@ def upload(conn_stream, filename):
 def main():
     """Main programmer function"""
     global DEBUG_LEVEL # pylint: disable=global-statement
-    global CRC_INDEX
+    global CRC_INDEX # pylint: disable=global-statement
 
     args = parse_args()
 
     DEBUG_LEVEL = args.debug
-    CRC_INDEX   = int(args.crc)
+    CRC_INDEX = int(args.crc)
 
     if args.interface == 'uart':
         if args.port is None:
-            raise IOError("--port is required with the UART interface")
+            raise ValueError("--port is required with the UART interface")
 
         print("Connecting to %s at baudrate %d.." % (args.port, args.baud))
 
         conn_stream = UARTStream(args.port, args.baud, args.timeout)
     elif args.interface == 'udp':
         if args.udp_addr is None:
-            raise IOError("--udp-addr is required with the UDP interface")
+            raise ValueError("--udp-addr is required with the UDP interface")
 
         print("Connecting to %s:%d.." % (args.udp_addr, args.udp_port))
 
